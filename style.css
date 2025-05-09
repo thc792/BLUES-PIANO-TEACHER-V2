@@ -1,0 +1,290 @@
+/**
+ * style.css
+ * Palette Blu Scuro/Blues - Più note svolazzanti, titolo centrato
+ */
+
+/* Reset base e font globale */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    line-height: 1.6;
+    margin: 0;
+    background-color: #415A77; /* Blu Acciaio/Grigio */
+    color: #E0E1DD;
+    font-size: 16px;
+}
+
+/* Header dell'applicazione per contenere titolo e note */
+.app-header {
+    background-color: #0D1B2A; /* Blu Scuro Principale */
+    padding: 40px 20px 50px 20px;
+    text-align: center; /* Fondamentale per centrare h1 (inline-block) */
+    position: relative;
+    min-height: 180px;
+    overflow: hidden;
+    border-bottom: 3px solid #778DA9;
+    margin-bottom: 20px;
+}
+
+/* Note Svolazzanti */
+.floating-note 
+{
+    position: absolute;
+    font-size: 28px; /* Puoi aggiustare la dimensione base qui */
+    color: #E0E1DD; /* Cambiato colore base in Bianco Sporco per far risaltare il glow */
+    opacity: 0.8;   /* Aumentato leggermente l'opacità base */
+    user-select: none;
+    animation: float 12s ease-in-out infinite alternate;
+
+    /* === EFFETTO GLOW BLU PER LE NOTE === */
+    /* Simile al titolo, ma più sottile */
+    text-shadow:
+        0 0 4px #85C1E9,  /* Glow blu chiaro principale */
+        0 0 8px #5DADE2; /* Glow blu medio più ampio */
+}
+/* Posizionamento e stili individuali per le note */
+.floating-note.note-1 { top: 15%; left: 10%; animation-delay: 0s; font-size: 30px; transform: rotate(-10deg); }
+.floating-note.note-2 { top: 30%; left: 85%; animation-delay: -2.5s; font-size: 26px; transform: rotate(15deg); }
+.floating-note.note-3 { top: 5%; left: 35%; animation-delay: -5s; font-size: 32px; transform: rotate(5deg); }
+.floating-note.note-5 { top: 40%; left: 20%; animation-delay: -3s; font-size: 28px; transform: rotate(20deg); }
+.floating-note.note-6 { top: 10%; left: 70%; animation-delay: -1.5s; font-size: 24px; transform: rotate(-15deg); }
+.floating-note.note-7 { top: 50%; left: 50%; animation-delay: -6s; font-size: 30px; transform: rotate(10deg); }
+.floating-note.note-8 { top: 25%; left: 5%; animation-delay: -8s; font-size: 28px; transform: rotate(-5deg); }
+.floating-note.note-9 { top: 5%; left: 90%; animation-delay: -10s; font-size: 26px; transform: rotate(25deg); }
+
+
+@keyframes float {
+    0% {
+        transform: translateY(0px) translateX(0px) rotate(-5deg);
+        opacity: 0.5;
+    }
+    25% {
+        transform: translateY(-12px) translateX(6px) rotate(0deg);
+        opacity: 0.7;
+    }
+    50% {
+        transform: translateY(-6px) translateX(-6px) rotate(8deg);
+        opacity: 0.6;
+    }
+    75% {
+        transform: translateY(6px) translateX(6px) rotate(-3deg);
+        opacity: 0.7;
+    }
+    100% {
+        transform: translateY(0px) translateX(0px) rotate(-5deg);
+        opacity: 0.5;
+    }
+}
+
+
+/* Titolo principale con riquadro argento */
+h1 {
+    /* text-align: center; Rimosso perché è già sul parent .app-header */
+    color: #E0E1DD; /* Testo Bianco Sporco */
+    margin: 0 auto;
+    font-weight: bold;
+    font-size: 2.5em;
+    /* text-shadow: 1px 1px 3px #000000; Vecchia ombra rimossa */
+
+    /* === NUOVO EFFETTO GLOW BLU === */
+    /* Layer multipli di text-shadow: */
+    /* 1. Ombra molto vicina, leggermente scura per definizione */
+    /* 2. Glow principale blu chiaro */
+    /* 3. Glow più ampio blu medio */
+    /* 4. Glow ancora più ampio e diffuso */
+    text-shadow:
+        0 0 2px #1B263B,  /* Contorno sottile blu scuro */
+        0 0 8px #85C1E9,  /* Glow blu chiaro principale */
+        0 0 12px #5DADE2, /* Glow blu medio più ampio */
+        0 0 18px #415A77; /* Glow blu acciaio diffuso */
+
+    border: 3px solid #C0C0C0;
+    padding: 12px 25px;
+    border-radius: 10px;
+    display: inline-block;
+    background-color: rgba(27, 38, 59, 0.6);
+    box-shadow: 0 0 12px rgba(192, 192, 192, 0.6);
+    position: relative;
+    z-index: 10;
+}
+
+/* Contenitori per controlli e stato */
+.controls, .status-area {
+    margin: 20px;
+    margin-bottom: 20px;
+    padding: 15px 20px;
+    background-color: #1B263B;
+    border: 1px solid #778DA9;
+    border-radius: 8px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Elementi dentro i controlli */
+.controls label,
+.controls select,
+.controls button {
+    margin: 5px 10px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    vertical-align: middle;
+    font-size: 0.95em;
+}
+
+.controls label {
+    font-weight: bold;
+    color: #E0E1DD;
+}
+
+.controls select {
+    border: 1px solid #778DA9;
+    min-width: 180px;
+    background-color: #0D1B2A;
+    color: #E0E1DD;
+    cursor: pointer;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23778DA9%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E');
+    background-repeat: no-repeat;
+    background-position: right 10px top 50%;
+    background-size: 10px auto;
+    padding-right: 30px;
+}
+.controls select:disabled {
+    background-color: #101a23;
+    cursor: not-allowed;
+    opacity: 0.6;
+    background-image: none;
+}
+
+/* Pulsanti Start/Stop */
+.controls button {
+    cursor: pointer;
+    color: #E0E1DD;
+    border: none;
+    font-weight: bold;
+    transition: background-color 0.2s ease, transform 0.1s ease;
+    min-width: 80px;
+}
+
+.controls button#start-button {
+     background-color: #5F8D4E;
+     color: white;
+}
+.controls button#start-button:hover:not(:disabled) {
+     background-color: #4A6F3C;
+     transform: translateY(-1px);
+}
+
+.controls button#stop-button {
+     background-color: #A41623;
+      color: white;
+}
+.controls button#stop-button:hover:not(:disabled) {
+     background-color: #83101A;
+     transform: translateY(-1px);
+}
+
+.controls button:active:not(:disabled) {
+    transform: translateY(0px);
+}
+
+.controls button:disabled {
+    cursor: not-allowed;
+    background-color: #2a3b4d;
+    color: #778DA9;
+    opacity: 0.6;
+    transform: none;
+}
+
+/* Area di stato */
+.status-area {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 10px 20px;
+    background-color: #0D1B2A;
+    border-color: #415A77;
+}
+
+.status-area p {
+    margin: 8px 15px;
+    font-size: 0.95em;
+    color: #E0E1DD;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+}
+
+/* Span dentro l'area di stato (valori) */
+.status-area span {
+    font-weight: bold;
+    min-width: 80px;
+    display: inline-block;
+    color: #0D1B2A;
+    background-color: #778DA9;
+    padding: 3px 8px;
+    border-radius: 3px;
+    margin-left: 8px;
+    text-align: right;
+    font-family: monospace;
+    font-size: 1.05em;
+}
+
+/* Area dello spartito VexFlow */
+#score {
+    margin: 20px;
+    margin-top: 20px;
+    padding: 20px;
+    border: 1px solid #1B263B;
+    min-height: 320px;
+    background-color: #E0E1DD;
+    text-align: center;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+#score svg {
+    display: inline-block;
+}
+
+/* Stili VexFlow */
+.vf-annotation text {
+    fill: #1B263B;
+    font-size: 0.9em;
+    font-weight: bold;
+}
+
+/* Media Query per schermi più piccoli */
+@media (max-width: 768px) {
+    .app-header { padding: 20px 15px 30px 15px; min-height: 150px; }
+    .floating-note { font-size: 22px; opacity: 0.4;}
+    h1 { font-size: 1.8em; padding: 10px 15px; }
+    .controls, .status-area { padding: 10px; margin-left: 10px; margin-right: 10px; }
+    .controls label, .controls select, .controls button { margin: 4px 6px; padding: 7px 10px; font-size: 0.9em; }
+    .controls select { min-width: 150px; }
+    .status-area { justify-content: center; }
+    .status-area p { margin: 5px 10px; font-size: 0.9em;}
+    .status-area span { min-width: 70px; font-size: 1em; }
+    #score { min-height: 280px; padding: 15px; margin-left: 10px; margin-right: 10px; }
+}
+
+@media (max-width: 480px) {
+    .app-header { padding: 15px 10px 25px 10px; min-height: 120px; }
+    .floating-note { font-size: 20px; opacity: 0.3; }
+    h1 { font-size: 1.6em; }
+    .controls { display: flex; flex-direction: column; align-items: stretch; }
+    .controls label, .controls select, .controls button { width: 90%; margin: 5px auto; }
+    .status-area { flex-direction: column; align-items: center; }
+    .status-area p { text-align: center; width: 80%; }
+    .status-area span { text-align: center; display: block; margin-left: 0; margin-top: 3px; }
+}

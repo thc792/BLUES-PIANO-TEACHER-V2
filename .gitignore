@@ -1,0 +1,13 @@
+# File di sistema
+.DS_Store
+Thumbs.db
+
+# Log
+*.log
+
+# File di configurazione dell'editor (esempi)
+.vscode/
+.idea/
+
+# Dipendenze (se usi un package manager come npm)
+# node_modules/
