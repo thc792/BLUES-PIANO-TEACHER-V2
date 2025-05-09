@@ -1,7 +1,7 @@
 /**
  * js/vexflow_renderer.js
  * Renderer per esercizi musicali usando VexFlow.
- * **VERSIONE MODIFICATA: Calcola startTick per ogni nota e restituisce posizioni verticali dei sistemi.**
+ * **VERSIONE FINALE: Calcola startTick per ogni nota e restituisce posizioni verticali dei sistemi.**
  *
  * Piano Future
  * Copyright (c) 2025 Lorenzetti Giuseppe

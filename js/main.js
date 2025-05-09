@@ -11,10 +11,12 @@
 
 /**
  * js/main.js
- * **VERSIONE MODIFICATA: Avanzamento basato sui ticks e gestione note contemporanee.**
+ * **VERSIONE DEBUG SCROLLING: Avanzamento basato sui ticks, gestione note contemporanee e scrolling migliorato.**
  * Implementa l'avanzamento passo-passo basato sulla posizione temporale (ticks)
  * e richiede il completamento di tutte le note/accordi attesi a un dato tick
- * prima di avanzare. Gestisce lo scrolling dello spartito.
+ * prima di avanzare. Gestisce lo scrolling dello spartito: verso il basso per
+ * nuove righe, verso l'alto alla fine dell'esercizio completo.
+ * INCLUDE LOG DI DEBUG SPECIFICI PER LO SCROLLING.
  */
 
 import { renderExercise } from './vexflow_renderer.js';
@@ -92,7 +94,7 @@ function populateCategorySelect() {
 
 /**
  * Popola il selettore degli esercizi per la categoria selezionata.
- * @param {string} categoryKey - La chiave della categoria selezionata.
+ * @param {string} categoryKey - La chiave della categoria dell'esercizio.
  */
 function populateExerciseSelect(categoryKey) {
     exerciseSelect.innerHTML = '<option value="">-- Seleziona Esercizio --</option>';
@@ -179,6 +181,7 @@ function selectExercise(exerciseId, categoryKey) {
 
         totalTicks = renderResult.totalTicks;
         systemYPositions = renderResult.systemPositions;
+        console.log("System Y Positions:", systemYPositions); // LOG DI DEBUG: Mostra le posizioni dei sistemi
 
         // Verifica se ci sono note suonabili (non pause) con startTick valido
         const hasPlayableNotes = [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes]
@@ -235,15 +238,17 @@ function resetNoteStates() {
             if (noteObj && typeof noteObj === 'object') {
                 if (noteObj.keys && Array.isArray(noteObj.keys) && noteObj.keys[0]?.toLowerCase().startsWith('r/')) {
                     noteObj.status = 'rest';
-                } else if (typeof noteObj.midiValue === 'number' || (Array.isArray(noteObj.midiValues) && noteObj.midiValues.length > 0)) {
+                } else if (typeof noteObj.startTick === 'number' && (typeof noteObj.midiValue === 'number' || (Array.isArray(noteObj.midiValues) && noteObj.midiValues.length > 0))) {
                     noteObj.status = 'pending';
                     // Resetta l'array delle note corrette per gli accordi
                     if (Array.isArray(noteObj.midiValues)) {
                         noteObj.correctMidiValues = [];
                     }
                 } else {
-                    // Oggetto non riconosciuto, marca come ignorato
-                    noteObj.status = 'ignored';
+                    // Oggetto non riconosciuto, marca come ignorato (if it has a startTick)
+                    if (typeof noteObj.startTick === 'number') {
+                         noteObj.status = 'ignored';
+                    }
                 }
             }
         });
@@ -251,7 +256,7 @@ function resetNoteStates() {
 
     resetArray(currentExerciseData.notesTreble);
     resetArray(currentExerciseData.notesBass);
-    resetArray(currentExerciseData.notes); // Per single stave
+    resetArray(currentExerciseData.notes); // For single stave
 }
 
 /**
@@ -262,153 +267,197 @@ function resetNoteStates() {
 function updateExpectedNotes() {
     if (!currentExerciseData) return;
 
+    console.log(`--- updateExpectedNotes chiamato. currentTick: ${currentTick} ---`); // LOG DI DEBUG
+
     const notesAtCurrentTick = [];
     const allNotes = [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes];
 
     // Trova tutte le note/accordi che iniziano esattamente al currentTick e sono 'pending'
     allNotes.forEach(noteObj => {
-        if (noteObj && noteObj.status === 'pending' && noteObj.startTick === currentTick) {
-            noteObj.status = 'expected'; // Marca come attesa
-            // Per gli accordi, assicurati che correctMidiValues sia vuoto all'inizio del passo
-            if (Array.isArray(noteObj.midiValues)) {
-                 noteObj.correctMidiValues = [];
+        if (noteObj && noteObj.status === 'pending' && typeof noteObj.startTick === 'number' && noteObj.startTick === currentTick) {
+            // If it's a rest, don't mark it as 'expected' but handle it in checkAndAdvanceStep
+            if (noteObj.keys && Array.isArray(noteObj.keys) && noteObj.keys[0]?.toLowerCase().startsWith('r/')) {
+                 // Leave as 'rest', checkAndAdvanceStep will handle it
+                 console.log(`  - Trovata Pausa al tick ${currentTick}:`, noteObj); // LOG DI DEBUG
+            } else {
+                noteObj.status = 'expected'; // Mark as expected
+                // For chords, ensure correctMidiValues array is empty at the start of the step
+                if (Array.isArray(noteObj.midiValues)) {
+                     noteObj.correctMidiValues = [];
+                }
+                notesAtCurrentTick.push(noteObj);
+                console.log(`  - Marcata come 'expected' al tick ${currentTick}:`, noteObj); // LOG DI DEBUG
             }
-            notesAtCurrentTick.push(noteObj);
         }
-        // Opzionale: Resetta lo stato 'expected' per note che sono state superate dal currentTick
-        // Questo non dovrebbe succedere con la logica attuale, ma è una safety net.
-        if (noteObj && noteObj.status === 'expected' && noteObj.startTick < currentTick) {
-             noteObj.status = 'pending'; // O 'ignored' a seconda della logica desiderata per note saltate
+        // Optional: Reset 'expected' status for notes that have been passed by currentTick
+        // This shouldn't happen with the current logic, but it's a safety net.
+        if (noteObj && noteObj.status === 'expected' && typeof noteObj.startTick === 'number' && noteObj.startTick < currentTick) {
+             noteObj.status = 'pending'; // Revert to pending if passed
+             console.warn(`  - Nota al tick ${noteObj.startTick} era 'expected' ma superata da currentTick ${currentTick}. Riportata a 'pending'.`, noteObj); // LOG DI DEBUG
         }
     });
 
-    // Aggiorna il messaggio UI con le note attese
+    // Update UI message with expected notes
     if (notesAtCurrentTick.length > 0) {
         const expectedText = notesAtCurrentTick.map(noteObj => {
-            if (noteObj.keys && noteObj.keys[0]?.toLowerCase().startsWith('r/')) return "Pausa"; // Non dovrebbe essere 'expected' ma per sicurezza
-            if (noteObj.keys) return noteObj.keys.join(', '); // Usa le chiavi VexFlow
+            // Rests shouldn't be here, but for safety
+            if (noteObj.keys && noteObj.keys[0]?.toLowerCase().startsWith('r/')) return "Pausa";
+            if (noteObj.keys) return noteObj.keys.join(', '); // Use VexFlow keys if available
             if (Array.isArray(noteObj.midiValues)) return `Accordo (${noteObj.midiValues.join(', ')})`;
             if (typeof noteObj.midiValue === 'number') return `Nota MIDI ${noteObj.midiValue}`;
             return "Nota sconosciuta";
-        }).join(' | '); // Separa le note attese con un pipe
+        }).join(' | '); // Separate expected notes with a pipe
 
         updateInfo(`Atteso: ${expectedText}`);
-    } else if (currentTick < totalTicks) {
-         // Questo caso si verifica se non ci sono note suonabili al currentTick (es. solo pause)
-         // o se c'è un errore nella logica di avanzamento.
-         // Se ci sono solo pause al currentTick, l'avanzamento dovrebbe essere automatico.
-         // Se non ci sono note *e* non ci sono pause, c'è un problema nei dati o nella logica.
-         const notesOrRestsAtCurrentTick = allNotes.filter(noteObj => noteObj && noteObj.startTick === currentTick);
-         if (notesOrRestsAtCurrentTick.length > 0 && notesOrRestsAtCurrentTick.every(n => n.keys && n.keys[0]?.toLowerCase().startsWith('r/'))) {
-             // Solo pause al currentTick, avanza automaticamente
-             console.log(`Solo pause al tick ${currentTick}. Avanzamento automatico.`);
-             updateInfo("Pausa...");
-             // Breve ritardo prima di avanzare per dare tempo di leggere "Pausa..."
-             setTimeout(checkAndAdvanceStep, 500); // Avanza dopo 500ms
-         } else {
-             console.warn(`Nessuna nota 'pending' o 'rest' trovata al currentTick ${currentTick}. Potenziale errore logico o dati esercizio.`);
-             updateInfo("In attesa..."); // Messaggio generico
-         }
+        console.log(`  Note 'expected' finali al tick ${currentTick}:`, notesAtCurrentTick); // LOG DI DEBUG
     } else {
-        // currentTick >= totalTicks, l'esercizio è finito o in fase di completamento
-        updateInfo("Esercizio completato o in attesa.");
+         // This case happens if there are no playable notes at currentTick (e.g., only rests)
+         // or if there's a logic error in advancement.
+         const allNotesAndRests = [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes];
+         const notesOrRestsAtCurrentTick = allNotesAndRests.filter(noteObj => noteObj && typeof noteObj.startTick === 'number' && noteObj.startTick === currentTick);
+
+         if (notesOrRestsAtCurrentTick.length > 0 && notesOrRestsAtCurrentTick.every(n => n.keys && n.keys[0]?.toLowerCase().startsWith('r/'))) {
+             // Only rests at currentTick
+             updateInfo("Pausa...");
+             console.log(`  Solo pause trovate al tick ${currentTick}.`); // LOG DI DEBUG
+         } else if (currentTick < totalTicks) {
+             // No valid notes/rests found at currentTick, but not at the end
+             console.warn(`  Nessuna nota/pausa valida trovata al currentTick ${currentTick}. Potenziale errore logico o dati esercizio.`); // LOG DI DEBUG
+             updateInfo("In attesa..."); // Generic message
+         } else {
+            // currentTick >= totalTicks, exercise is finished or completing
+            updateInfo("Esercizio completato o in attesa.");
+            console.log(`  currentTick ${currentTick} >= totalTicks ${totalTicks}. Esercizio finito.`); // LOG DI DEBUG
+         }
     }
 }
 
 /**
- * Controlla se tutte le note/accordi attesi al `currentTick` sono stati completati.
- * Se sì, avanza il `currentTick` al prossimo passo e aggiorna lo stato.
+ * Controlla se tutte le notes/chords expected at `currentTick` have been completed.
+ * If yes, advances `currentTick` to the next step and updates state.
+ * Also handles automatic advancement for rests.
  */
 function checkAndAdvanceStep() {
     if (!isPlaying || !currentExerciseData) return;
 
-    const notesAtCurrentTick = [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes]
-        .filter(noteObj => noteObj && noteObj.startTick === currentTick && !(noteObj.keys && noteObj.keys[0]?.toLowerCase().startsWith('r/'))); // Considera solo note suonabili
+    console.log(`--- checkAndAdvanceStep chiamato. currentTick: ${currentTick}, totalTicks: ${totalTicks} ---`); // LOG DI DEBUG
 
-    // Se non ci sono note suonabili a questo tick (es. solo pause), il passo è considerato completo
-    if (notesAtCurrentTick.length === 0) {
-         console.log(`Nessuna nota suonabile al tick ${currentTick}. Passo considerato completo.`);
-         // Trova il prossimo tick valido
-         const allNotesAndRests = [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes];
-         const nextTicks = allNotesAndRests
+    const allNotes = [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes];
+    const notesOrRestsAtCurrentTick = allNotes.filter(noteObj => noteObj && typeof noteObj.startTick === 'number' && noteObj.startTick === currentTick);
+
+    console.log(`  Note/Pause trovate al currentTick (${currentTick}):`, notesOrRestsAtCurrentTick); // LOG DI DEBUG
+
+    // Case 1: Only rests at currentTick
+    if (notesOrRestsAtCurrentTick.length > 0 && notesOrRestsAtCurrentTick.every(n => n.keys && n.keys[0]?.toLowerCase().startsWith('r/'))) {
+         console.log(`Solo pause al tick ${currentTick}. Avanzamento automatico.`); // LOG DI DEBUG
+         // Find the next valid tick
+         const nextTicks = allNotes
              .filter(noteObj => noteObj && typeof noteObj.startTick === 'number' && noteObj.startTick > currentTick)
              .map(noteObj => noteObj.startTick);
 
-         const nextTick = Math.min(...nextTicks); // Trova il minimo tra i tick successivi
+         const nextTick = Math.min(...nextTicks); // Find the minimum among subsequent ticks
 
-         if (isFinite(nextTick)) { // Se è stato trovato un tick successivo valido
+         console.log(`  Prossimi tick disponibili (> ${currentTick}):`, nextTicks); // LOG DI DEBUG
+         console.log(`  Prossimo tick calcolato (nextTick): ${nextTick}`); // LOG DI DEBUG
+
+         if (isFinite(nextTick)) { // If a valid subsequent tick was found
              currentTick = nextTick;
-             console.log(`Avanzamento automatico al prossimo tick: ${currentTick}`);
-             // Aggiorna lo stato delle note per il nuovo tick
+             console.log(`Avanzamento automatico al prossimo tick: ${currentTick}`); // LOG DI DEBUG
+             // Update note states for the new tick
              updateExpectedNotes();
-             // Rerenderizza lo spartito con i nuovi stati
+             // Rerender the score with new states
              renderExercise(scoreDiv.id, currentExerciseData);
-             // Controlla e gestisci lo scrolling
+             // Check and handle scrolling
              scrollToCurrentSystem();
+             // If the new tick is still only rests, the next checkAndAdvanceStep call will handle it
          } else {
-             // Nessun tick successivo trovato, l'esercizio è finito
-             console.log("Nessun tick successivo trovato. Esercizio completato.");
-             handleExerciseCompletion();
+             // No subsequent tick found, exercise is finished
+             console.log("Nessun tick successivo trovato. Esercizio completato."); // LOG DI DEBUG
+             // *** SCROLL UP AT THE END OF THE COMPLETE EXERCISE ***
+             scoreDiv.scrollTo({ top: 0, behavior: 'smooth' });
+             handleExerciseCompletion(); // Handles repetitions or moving to the next exercise
          }
-         return; // Esci dalla funzione, il passo è stato gestito (avanzato o finito)
+         return; // Exit the function, the step has been handled (advanced or finished)
     }
 
+    // Case 2: There are playable notes at currentTick
+    const playableNotesAtCurrentTick = notesOrRestsAtCurrentTick.filter(noteObj => !(noteObj.keys && noteObj.keys[0]?.toLowerCase().startsWith('r/')));
 
-    // Controlla se tutte le note/accordi attesi a questo tick sono stati completati
-    const allNotesInStepCompleted = notesAtCurrentTick.every(noteObj => {
+    // If there are no playable notes (but there were notes/rests), and it wasn't only rests (Case 1),
+    // there's a logic error or bad data.
+    if (playableNotesAtCurrentTick.length === 0) {
+         console.error(`Errore logico: checkAndAdvanceStep chiamato con tick ${currentTick} che non ha note suonabili né è solo pause.`); // LOG DI DEBUG
+         updateInfo("Errore interno. Ferma e riavvia.");
+         stopExercise(); // Stop the exercise to prevent infinite loops
+         return;
+    }
+
+    console.log(`  Note suonabili attese al tick ${currentTick}:`, playableNotesAtCurrentTick); // LOG DI DEBUG
+
+    // Check if all expected notes/chords at this tick have been completed
+    const allNotesInStepCompleted = playableNotesAtCurrentTick.every(noteObj => {
         if (typeof noteObj.midiValue === 'number') {
-            return noteObj.status === 'correct'; // Nota singola
+            return noteObj.status === 'correct'; // Single note
         } else if (Array.isArray(noteObj.midiValues)) {
-            // Accordo: tutte le note MIDI dell'accordo devono essere state suonate
-            return noteObj.status === 'correct' && noteObj.correctMidiValues && noteObj.correctMidiValues.length >= noteObj.midiValues.length;
+            // Chord: all MIDI notes in the chord must have been played
+            const allMidiNotesPlayedForChord = noteObj.midiValues.every(requiredMidi => noteObj.correctMidiValues && noteObj.correctMidiValues.includes(requiredMidi));
+            console.log(`    - Accordo al tick ${currentTick}: ${noteObj.correctMidiValues ? noteObj.correctMidiValues.length : 0}/${noteObj.midiValues.length} note suonate. Completato? ${allMidiNotesPlayedForChord}`); // LOG DI DEBUG
+            return noteObj.status === 'correct' && allMidiNotesPlayedForChord;
         }
-        return false; // Oggetto non valido
+        return false; // Invalid object
     });
 
-    if (allNotesInStepCompleted) {
-        console.log(`Passo al tick ${currentTick} completato!`);
+    console.log(`  Tutte le note al tick ${currentTick} completate? ${allNotesInStepCompleted}`); // LOG DI DEBUG
 
-        // Trova il prossimo tick valido (il minimo startTick > currentTick)
-        const allNotesAndRests = [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes];
-         const nextTicks = allNotesAndRests
+    if (allNotesInStepCompleted) {
+        console.log(`Passo al tick ${currentTick} completato!`); // LOG DI DEBUG
+
+        // Find the next valid tick (the minimum startTick > currentTick)
+         const nextTicks = allNotes
              .filter(noteObj => noteObj && typeof noteObj.startTick === 'number' && noteObj.startTick > currentTick)
              .map(noteObj => noteObj.startTick);
 
-         const nextTick = Math.min(...nextTicks); // Trova il minimo tra i tick successivi
+         const nextTick = Math.min(...nextTicks); // Find the minimum among subsequent ticks
 
-        if (isFinite(nextTick)) { // Se è stato trovato un tick successivo valido
+        console.log(`  Prossimi tick disponibili (> ${currentTick}):`, nextTicks); // LOG DI DEBUG
+        console.log(`  Prossimo tick calcolato (nextTick): ${nextTick}`); // LOG DI DEBUG
+
+
+        if (isFinite(nextTick)) { // If a valid subsequent tick was found
             currentTick = nextTick;
-            console.log(`Avanzamento al prossimo tick: ${currentTick}`);
-            // Aggiorna lo stato delle note per il nuovo tick
+            console.log(`Avanzamento al prossimo tick: ${currentTick}`); // LOG DI DEBUG
+            // Update note states for the new tick
             updateExpectedNotes();
-            // Rerenderizza lo spartito con i nuovi stati
+            // Rerender the score with new states
             renderExercise(scoreDiv.id, currentExerciseData);
-            // Controlla e gestisci lo scrolling
+            // Check and handle scrolling
             scrollToCurrentSystem();
         } else {
-            // Nessun tick successivo trovato, l'esercizio è finito
-            console.log("Nessun tick successivo trovato. Esercizio completato.");
-            handleExerciseCompletion();
+            // No subsequent tick found, exercise is finished
+            console.log("Nessun tick successivo trovato. Esercizio completato."); // LOG DI DEBUG
+            // *** SCROLL UP AT THE END OF THE COMPLETE EXERCISE ***
+            scoreDiv.scrollTo({ top: 0, behavior: 'smooth' });
+            handleExerciseCompletion(); // Handles repetitions or moving to the next exercise
         }
     } else {
-        // Il passo corrente non è ancora completato, continua ad aspettare input MIDI
-        console.log(`Passo al tick ${currentTick} non ancora completato. In attesa...`);
-        // Non fare nulla qui, l'input MIDI successivo chiamerà di nuovo handleNoteOn -> checkAndAdvanceStep
+        // The current step is not yet completed, continue waiting for MIDI input
+        console.log(`Passo al tick ${currentTick} non ancora completato. In attesa...`); // LOG DI DEBUG
+        // Do nothing here, the next MIDI input will call handleNoteOn -> checkAndAdvanceStep again
     }
 }
 
 /**
- * Avvia l'esecuzione dell'esercizio selezionato.
+ * Starts the selected exercise execution.
  */
 function startExercise() {
-    // Verifica le pre-condizioni per l'avvio
-    const hasPlayableNotes = [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes]
+    // Check pre-conditions for starting
+    const hasPlayableNotes = currentExerciseData ? [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes]
             .some(note => note && typeof note.startTick === 'number' && note.startTick >= 0 &&
-                          !(note.keys && note.keys[0]?.toLowerCase().startsWith('r/')));
+                          !(note.keys && note.keys[0]?.toLowerCase().startsWith('r/'))) : false;
 
     if (!currentExerciseData || !midiReady || !hasPlayableNotes || isPlaying) {
          console.warn("Impossibile avviare l'esercizio. Controlla stato MIDI, selezione esercizio, presenza note suonabili e se è già in corso.");
-         // Fornisci feedback all'utente se necessario
+         // Provide feedback to the user if necessary
          if (!midiReady) updateInfo("Collega un dispositivo MIDI.");
          else if (!currentExerciseData) updateInfo("Seleziona un esercizio.");
          else if (!hasPlayableNotes) updateInfo("Questo esercizio non ha note da suonare.");
@@ -416,106 +465,109 @@ function startExercise() {
          return;
     }
 
-    // Pulisci eventuali timeout precedenti per il passaggio automatico
+    // Clear any previous timeouts for automatic advancement
     if (exerciseCompletionTimeout) {
         clearTimeout(exerciseCompletionTimeout);
         exerciseCompletionTimeout = null;
     }
 
-    currentRepetition = 1;       // Inizia dalla prima ripetizione
-    currentTick = 0;             // Inizia dall'inizio dell'esercizio
-    resetNoteStates();           // Resetta lo stato di tutte le note a 'pending'/'rest'
-    console.log("Avvio Esercizio:", currentExerciseDefinition.name || currentExerciseDefinition.id, `- Ripetizione ${currentRepetition}/${targetRepetitions}`);
+    currentRepetition = 1;       // Start from the first repetition
+    currentTick = 0;             // Start from the beginning of the exercise
+    resetNoteStates();           // Reset all note states to 'pending'/'rest'
+    console.log("Avvio Esercizio:", currentExerciseDefinition.name || currentExerciseDefinition.id, `- Ripetizione ${currentRepetition}/${targetRepetitions}`); // LOG DI DEBUG
 
-    isPlaying = true;           // Imposta lo stato globale
-    // Aggiorna UI
+    isPlaying = true;           // Set global state
+    // Update UI
     startButton.disabled = true;
     stopButton.disabled = false;
     categorySelect.disabled = true;
     exerciseSelect.disabled = true;
-    updateSuccessRate();        // Aggiorna la percentuale di successo (inizialmente 0%)
-    playedNoteSpan.textContent = '--'; // Pulisci l'ultima nota suonata
+    updateSuccessRate();        // Update success rate (initially 0%)
+    playedNoteSpan.textContent = '--'; // Clear last played note
 
-    // Marca le prime note/accordi come 'expected' e aggiorna l'UI
+    // Mark the first notes/chords as 'expected' and update UI
     updateExpectedNotes();
-    // Renderizza lo stato iniziale (le prime note saranno evidenziate come 'expected')
+    // Render the initial state (first notes will be highlighted as 'expected')
     renderExercise(scoreDiv.id, currentExerciseData);
-    // Assicurati che lo spartito sia all'inizio
-    scoreDiv.scrollTop = 0;
+    // Ensure the score is at the beginning
+    scoreDiv.scrollTop = 0; // Always scroll to the top on start
 
-    // Il messaggio UI è già stato aggiornato da updateExpectedNotes
+    // UI message is already updated by updateExpectedNotes
     // updateInfo(`Ripetizione ${currentRepetition}/${targetRepetitions}. Suona la prima nota.`);
 }
 
 /**
- * Ferma l'esecuzione dell'esercizio.
+ * Stops the exercise execution.
  */
 function stopExercise() {
-     if (!isPlaying && stopButton.disabled) return; // Evita azioni multiple se già fermo
+     if (!isPlaying && stopButton.disabled) return; // Prevent multiple actions if already stopped
 
-     // Pulisci timeout per avanzamento automatico se presente
+     // Clear timeout for automatic advancement if present
     if (exerciseCompletionTimeout) {
         clearTimeout(exerciseCompletionTimeout);
         exerciseCompletionTimeout = null;
     }
 
-    console.log("Arresto manuale dell'esercizio.");
+    console.log("Arresto manuale dell'esercizio."); // LOG DI DEBUG
     isPlaying = false;
 
-    // Resetta lo stato delle note nell'esercizio corrente (se esiste) e renderizza lo stato 'pulito'
+    // Reset note states in the current exercise (if it exists) and render the 'clean' state
     if (currentExerciseData) {
-        resetNoteStates(); // Riporta le note a 'pending'/'rest'
-        currentTick = 0; // Resetta il tick corrente
-        // Rerenderizza per mostrare lo spartito senza evidenziazioni di stato
+        resetNoteStates(); // Revert notes to 'pending'/'rest'
+        currentTick = 0; // Reset current tick
+        // Rerender to show the score without state highlights
         renderExercise(scoreDiv.id, currentExerciseData);
+        scoreDiv.scrollTop = 0; // Scroll to top when stopped
     } else {
-        // Se non c'è un esercizio caricato, assicurati che lo score sia vuoto o mostri un messaggio
+        // If no exercise is loaded, ensure the score area is empty or shows a message
         scoreDiv.innerHTML = '<p>Nessun esercizio attivo.</p>';
     }
 
-    // Riabilita i controlli
-    // Lo start button va riabilitato solo se le condizioni sono soddisfatte
+    // Re-enable controls
+    // The start button should only be re-enabled if conditions are met
     const hasPlayableNotes = currentExerciseData ? [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes]
             .some(note => note && typeof note.startTick === 'number' && note.startTick >= 0 &&
                           !(note.keys && note.keys[0]?.toLowerCase().startsWith('r/'))) : false;
     startButton.disabled = !midiReady || !currentExerciseData || !hasPlayableNotes;
-    stopButton.disabled = true; // Disabilita stop perché l'esercizio è fermo
+    stopButton.disabled = true; // Disable stop button as exercise is stopped
     categorySelect.disabled = false;
     exerciseSelect.disabled = false;
 
-    // Resetta i messaggi di stato
+    // Reset status messages
     updateInfo("Esercizio interrotto. Pronto per iniziare.");
-    // Non resettare la success rate qui, potrebbe essere utile vederla fino al prossimo start
+    // Don't reset success rate here, it might be useful to see until the next start
     // successRateSpan.textContent = '-- %';
     playedNoteSpan.textContent = '--';
 }
 
 /**
- * Resetta lo stato dell'interfaccia utente a uno stato neutro.
+ * Resets the UI state to a neutral state.
  */
 function resetUIState() {
-    isPlaying = false; // Assicura che lo stato di gioco sia falso
-    currentTick = 0; // Resetta il tick corrente
-    currentRepetition = 1; // Resetta la ripetizione
+    isPlaying = false; // Ensure game state is false
+    currentTick = 0; // Reset current tick
+    currentRepetition = 1; // Reset repetition
     successRateSpan.textContent = '-- %';
     updateInfo("-- Seleziona o avvia un esercizio --");
     playedNoteSpan.textContent = '--';
-    stopButton.disabled = true; // Stop è sempre disabilitato quando non si sta suonando
+    stopButton.disabled = true; // Stop is always disabled when not playing
 
-    // Riabilita i selettori (potrebbero essere stati disabilitati durante l'esecuzione)
+    // Re-enable selectors (they might have been disabled during the execution)
     categorySelect.disabled = false;
-    // exerciseSelect viene gestito da populateExerciseSelect
+    // exerciseSelect is handled by populateExerciseSelect
 
-    // Pulisci eventuale timeout residuo per l'avanzamento automatico
+    // Clear any residual timeout for automatic advancement
     if (exerciseCompletionTimeout) {
         clearTimeout(exerciseCompletionTimeout);
         exerciseCompletionTimeout = null;
     }
+    // Scroll to top when resetting state
+    scoreDiv.scrollTop = 0;
 }
 
 /**
- * Aggiorna la percentuale di successo visualizzata.
- * Calcolata come note corrette totali / note suonabili totali nell'esercizio.
+ * Updates the displayed success rate percentage.
+ * Calculated as total correct notes / total playable notes in the exercise.
  */
 function updateSuccessRate() {
     if (!currentExerciseData) {
@@ -526,7 +578,7 @@ function updateSuccessRate() {
     const allPlayableNotes = [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes]
         .filter(note => note && typeof note.startTick === 'number' && !(note.keys && note.keys[0]?.toLowerCase().startsWith('r/')));
 
-    let totalPlayableNoteEvents = 0; // Conta le singole note MIDI suonabili (non gli accordi come blocco)
+    let totalPlayableNoteEvents = 0; // Count individual playable MIDI notes (not chords as a block)
     let correctPlayableNoteEvents = 0;
 
     allPlayableNotes.forEach(noteObj => {
@@ -545,9 +597,9 @@ function updateSuccessRate() {
 
 
      if (totalPlayableNoteEvents === 0) {
-         successRateSpan.textContent = 'N/A'; // Non applicabile se non ci sono note da suonare
+         successRateSpan.textContent = 'N/A'; // Not applicable if there are no notes to play
      } else {
-         // Assicura che il conteggio non superi il totale (potrebbe succedere per errori logici)
+         // Ensure the count doesn't exceed the total (could happen due to logic errors)
          const currentCorrect = Math.min(correctPlayableNoteEvents, totalPlayableNoteEvents);
          const percentage = ((currentCorrect / totalPlayableNoteEvents) * 100).toFixed(1);
          successRateSpan.textContent = `${percentage} %`;
@@ -555,145 +607,163 @@ function updateSuccessRate() {
 }
 
 /**
- * Aggiorna il messaggio informativo principale nell'UI.
- * @param {string} message - Il messaggio da visualizzare.
+ * Updates the main info message in the UI.
+ * @param {string} message - The message to display.
  */
 function updateInfo(message) {
     expectedNoteSpan.textContent = message;
 }
 
 /**
- * Scorre l'area dello spartito per mostrare il sistema corrente.
+ * Scrolls the score area to show the current system.
  */
 function scrollToCurrentSystem() {
-    if (!systemYPositions || systemYPositions.length === 0) return;
+    if (!systemYPositions || systemYPositions.length === 0) {
+        console.warn("scrollToCurrentSystem: systemYPositions non disponibile o vuoto."); // LOG DI DEBUG
+        return;
+    }
 
-    // Trova il sistema che contiene il currentTick
-    // Cerca l'ultimo sistema il cui startTick è <= currentTick
-    let targetSystemY = 0; // Default: inizio dello spartito
+    console.log(`scrollToCurrentSystem chiamato. currentTick: ${currentTick}`); // LOG DI DEBUG
+    console.log("  systemYPositions:", systemYPositions); // LOG DI DEBUG: Mostra l'array completo
+
+    // Find the system containing the currentTick
+    // Search for the last system whose startTick is <= currentTick
+    let targetSystemY = 0; // Default: top of the score (tick 0)
+    let foundSystem = false;
     for (let i = systemYPositions.length - 1; i >= 0; i--) {
         if (currentTick >= systemYPositions[i].tick) {
             targetSystemY = systemYPositions[i].y;
+            foundSystem = true;
+            console.log(`  Trovato sistema per tick ${currentTick} al tick ${systemYPositions[i].tick}. Target Y: ${targetSystemY}`); // LOG DI DEBUG
             break;
         }
     }
 
-    // Esegui lo scrolling
-    // Usa behavior: 'smooth' per uno scrolling più fluido (potrebbe non essere supportato ovunque)
+    if (!foundSystem) {
+         console.warn(`  Nessun sistema trovato per currentTick ${currentTick}. Scroll all'inizio.`); // LOG DI DEBUG
+         targetSystemY = 0; // Ensure it's 0 if no system matches (at least the first one should match)
+    }
+
+
+    // Perform the scroll
+    // Use behavior: 'smooth' for smoother scrolling (may not be supported everywhere)
     scoreDiv.scrollTo({
         top: targetSystemY,
         behavior: 'smooth'
     });
+    console.log(`  Scrolling eseguito a Y: ${targetSystemY}`); // LOG DI DEBUG
 }
 
 
 // --- Gestione Input MIDI (Modificata per la nuova logica di avanzamento) ---
 
 /**
- * Gestisce l'evento Note On ricevuto dal dispositivo MIDI.
- * @param {string} noteName - Nome della nota (es. "C#4").
- * @param {number} midiNote - Valore MIDI della nota (0-127).
- * @param {number} velocity - Velocità della nota (1-127).
+ * Handles the Note On event received from the MIDI device.
+ * @param {string} noteName - Name of the note (e.g., "C#4").
+ * @param {number} midiNote - MIDI value of the note (0-127).
+ * @param {number} velocity - Velocity of the note (1-127).
  */
 function handleNoteOn(noteName, midiNote, velocity) {
-    // Aggiorna la nota suonata nell'UI
-    playedNoteSpan.textContent = `${noteName} (MIDI: ${midiNote})`; // Rimosso Vel per brevità
-    playedNoteSpan.style.color = ''; // Resetta colore da eventuale errore precedente
+    // Update the played note in the UI
+    playedNoteSpan.textContent = `${noteName} (MIDI: ${midiNote})`; // Removed Vel for brevity
+    playedNoteSpan.style.color = ''; // Reset color from previous error if any
 
     if (!isPlaying || !currentExerciseData) {
          console.log(`Input MIDI ${noteName} (MIDI: ${midiNote}) ignorato: esercizio non in corso.`);
-         return; // Ignora input se non si sta suonando
+         return; // Ignore input if not playing
     }
 
-    console.log(`Input MIDI Ricevuto: ${noteName} (MIDI: ${midiNote}) al tick ${currentTick}`);
+    console.log(`Input MIDI Ricevuto: ${noteName} (MIDI: ${midiNote}) al tick ${currentTick}`); // LOG DI DEBUG
 
     const allNotes = [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes];
-    const notesAtCurrentTick = allNotes.filter(noteObj => noteObj && noteObj.startTick === currentTick && noteObj.status === 'expected');
+    const notesAtCurrentTick = allNotes.filter(noteObj => noteObj && typeof noteObj.startTick === 'number' && noteObj.startTick === currentTick && noteObj.status === 'expected');
 
-    let noteMatchedInStep = false; // Flag per sapere se la nota suonata corrisponde a QUALCOSA di atteso
+    let noteMatchedInStep = false; // Flag to know if the played note matches ANYTHING expected
 
-    // Itera su tutte le note/accordi attesi al currentTick
+    // Iterate over all expected notes/chords at the currentTick
     notesAtCurrentTick.forEach(noteObj => {
-        // Salta le pause (non dovrebbero essere 'expected' ma per sicurezza)
+        // Skip rests (they shouldn't be 'expected' here)
         if (noteObj.keys && noteObj.keys[0]?.toLowerCase().startsWith('r/')) return;
 
-        // CASO 1: Nota singola attesa
+        // CASE 1: Single expected note
         if (typeof noteObj.midiValue === 'number' && noteObj.midiValue === midiNote) {
-            // Trovata corrispondenza per una nota singola attesa
-            if (noteObj.status === 'expected') { // Doppia verifica dello stato
-                noteObj.status = 'correct'; // Marca come corretta
+            // Found a match for a single expected note
+            if (noteObj.status === 'expected') { // Double check status
+                noteObj.status = 'correct'; // Mark as correct
                 noteMatchedInStep = true;
-                console.log(`   Corretta! Nota singola ${noteName} (MIDI: ${midiNote}) al tick ${currentTick}.`);
-                // Non aggiornare l'info qui, verrà fatto dopo il checkAndAdvanceStep
-            } else {
-                 console.log(`   Nota singola ${noteName} (MIDI: ${midiNote}) al tick ${currentTick} già marcata come ${noteObj.status}.`);
+                console.log(`   Corretta! Nota singola ${noteName} (MIDI: ${midiNote}) al tick ${currentTick}.`); // LOG DI DEBUG
+                // Don't update info here, it will be done after checkAndAdvanceStep
             }
         }
-        // CASO 2: Accordo atteso
+        // CASE 2: Expected chord
         else if (Array.isArray(noteObj.midiValues) && noteObj.midiValues.includes(midiNote)) {
-            // Trovata corrispondenza per una nota all'interno di un accordo atteso
-            if (noteObj.status === 'expected') { // Doppia verifica dello stato
-                // Verifica che questa specifica nota MIDI non sia già stata segnata come corretta per questo accordo
+            // Found a match for a note within an expected chord
+            if (noteObj.status === 'expected') { // Double check status
+                // Check if this specific MIDI note has already been marked as correct for this chord
                 if (!noteObj.correctMidiValues || !Array.isArray(noteObj.correctMidiValues)) {
-                     noteObj.correctMidiValues = []; // Inizializza se mancante (safety check)
+                     noteObj.correctMidiValues = []; // Initialize if missing (safety check)
                 }
                 if (!noteObj.correctMidiValues.includes(midiNote)) {
-                    noteObj.correctMidiValues.push(midiNote); // Aggiungi la nota MIDI corretta all'accordo
+                    noteObj.correctMidiValues.push(midiNote); // Add the correct MIDI note to the chord
                     noteMatchedInStep = true;
-                    console.log(`   Corretta! Nota ${noteName} (MIDI: ${midiNote}) parte di accordo al tick ${currentTick}. Note accordo suonate: ${noteObj.correctMidiValues.length}/${noteObj.midiValues.length}.`);
+                    console.log(`   Corretta! Nota ${noteName} (MIDI: ${midiNote}) parte di accordo al tick ${currentTick}. Note accordo suonate: ${noteObj.correctMidiValues.length}/${noteObj.midiValues.length}.`); // LOG DI DEBUG
 
-                    // Se l'accordo è completo, marca l'intero oggetto nota come 'correct'
-                    if (noteObj.correctMidiValues.length >= noteObj.midiValues.length) {
+                    // If the chord is complete, mark the entire note object as 'correct'
+                    // Check if ALL MIDI notes in the chord have been played
+                    const allMidiNotesPlayedForChord = noteObj.midiValues.every(requiredMidi =>
+                        noteObj.correctMidiValues.includes(requiredMidi)
+                    );
+
+                    if (allMidiNotesPlayedForChord) {
                         noteObj.status = 'correct';
-                        console.log(`   -> Accordo al tick ${currentTick} completato!`);
+                        console.log(`   -> Accordo al tick ${currentTick} completato!`); // LOG DI DEBUG
                     }
-                    // Non aggiornare l'info qui, verrà fatto dopo il checkAndAdvanceStep
-                } else {
-                    console.log(`   Nota ${noteName} (MIDI: ${midiNote}) già suonata correttamente per l'accordo al tick ${currentTick}.`);
+                    // Don't update info here, it will be done after checkAndAdvanceStep
                 }
-            } else {
-                 console.log(`   Nota ${noteName} (MIDI: ${midiNote}) parte di accordo al tick ${currentTick} già marcata come ${noteObj.status}.`);
             }
         }
-        // else: la nota suonata non corrisponde a questa specifica nota/accordo atteso, continua il ciclo
+        // else: played note doesn't match this specific expected note/chord, continue loop
     });
 
-    // --- Logica Post-Input ---
+    // --- Post-Input Logic ---
     if (noteMatchedInStep) {
-        // Se almeno una nota attesa è stata suonata correttamente
-        updateSuccessRate(); // Aggiorna la percentuale di successo complessiva
-        renderExercise(scoreDiv.id, currentExerciseData); // Ridisegna lo spartito con lo stato aggiornato
-        // Controlla se il passo corrente è stato completato e avanza se necessario
+        // If at least one expected note was played correctly
+        updateSuccessRate(); // Update overall success percentage
+        renderExercise(scoreDiv.id, currentExerciseData); // Redraw the score with updated state
+        // Check if the current step is completed and advance if necessary
         checkAndAdvanceStep();
-        // Il messaggio UI viene aggiornato da updateExpectedNotes o checkAndAdvanceStep
+        // UI message is updated by updateExpectedNotes or checkAndAdvanceStep
     } else {
-        // La nota suonata non corrisponde a nessuna nota 'expected' al currentTick
-        console.log(`   Nota ${noteName} (MIDI: ${midiNote}) non attesa al tick ${currentTick}.`);
+        // The played note does not match any 'expected' note at the currentTick
+        console.log(`   Nota ${noteName} (MIDI: ${midiNote}) non attesa al tick ${currentTick}.`); // LOG DI DEBUG
         updateInfo(`Errore: ${noteName} non atteso`);
-        playedNoteSpan.style.color = 'red'; // Evidenzia l'errore
-        // Il colore rosso rimarrà finché non arriva il prossimo input MIDI
+        playedNoteSpan.style.color = 'red'; // Highlight the error
+        // The red color will remain until the next MIDI input arrives
     }
 }
 
 
-// --- Gestione Completamento Esercizio e Avanzamento (MODIFICATA) ---
+// --- Exercise Completion and Advancement Handling (MODIFIED) ---
 /**
- * Gestisce il completamento di una ripetizione o dell'intero esercizio.
+ * Handles the completion of a repetition or the entire exercise.
  */
 function handleExerciseCompletion() {
+    // This function is called when checkAndAdvanceStep determines there are no more subsequent ticks.
+    // It means the last step of the exercise has been completed.
+
     if (currentRepetition < targetRepetitions) {
-        // Ripetizione completata, ma non l'esercizio intero
-        console.log(`--- Ripetizione ${currentRepetition} di ${targetRepetitions} completata! ---`);
-        currentRepetition++; // Passa alla prossima ripetizione
+        // Repetition completed, but not the entire exercise
+        console.log(`--- Ripetizione ${currentRepetition} di ${targetRepetitions} completata! ---`); // LOG DI DEBUG
+        currentRepetition++; // Move to the next repetition
 
-        console.log(`Avvio preparazione per ripetizione ${currentRepetition}/${targetRepetitions}`);
+        console.log(`Avvio preparazione per ripetizione ${currentRepetition}/${targetRepetitions}`); // LOG DI DEBUG
         updateInfo(`Ottimo! Prepara la Rip. ${currentRepetition}`);
-        playedNoteSpan.textContent = "Bene!"; // Messaggio temporaneo
+        playedNoteSpan.textContent = "Bene!"; // Temporary message
 
-        // Usa setTimeout per dare tempo all'utente di vedere il risultato
-        // e prepararsi alla prossima sequenza.
-        const delay = 1500; // Delay prima di resettare per la prossima ripetizione (es. 1.5 secondi)
-        // Disabilita i controlli durante l'attesa
+        // Use setTimeout to give the user time to see the result
+        // and prepare for the next sequence.
+        const delay = 1500; // Delay before resetting for the next repetition (e.g., 1.5 seconds)
+        // Disable controls during the wait
         startButton.disabled = true;
         stopButton.disabled = true;
         categorySelect.disabled = true;
@@ -701,153 +771,153 @@ function handleExerciseCompletion() {
 
 
         exerciseCompletionTimeout = setTimeout(() => {
-            exerciseCompletionTimeout = null; // Pulisce il riferimento al timeout
+            exerciseCompletionTimeout = null; // Clear the timeout reference
             if (!isPlaying) {
-                 console.log("Esercizio fermato durante il delay di ripetizione.");
-                 resetUIState(); // Assicura che l'UI sia nello stato corretto dopo l'interruzione
-                 // Riabilita i controlli per la selezione manuale
+                 console.log("Esercizio fermato durante il delay di ripetizione."); // LOG DI DEBUG
+                 resetUIState(); // Ensure UI is in correct state after interruption
+                 // Re-enable controls for manual selection
                  categorySelect.disabled = false;
                  exerciseSelect.disabled = false;
-                 // Start button gestito da resetUIState e updateMidiStatus
+                 // Start button is handled by resetUIState and updateMidiStatus
                  return;
             }
-            console.log(`Inizio Ripetizione ${currentRepetition}`);
-            currentTick = 0;            // Resetta il tick corrente all'inizio dell'esercizio
-            resetNoteStates();          // Resetta stati a 'pending'/'rest'
-            updateExpectedNotes();      // Marca le prime note come 'expected' e aggiorna l'info
-            renderExercise(scoreDiv.id, currentExerciseData); // Renderizza per la nuova ripetizione
-            updateSuccessRate();        // Resetta la % per la nuova ripetizione (mostrerà 0%)
-            scrollToCurrentSystem();    // Scorre all'inizio dello spartito
+            console.log(`Inizio Ripetizione ${currentRepetition}`); // LOG DI DEBUG
+            currentTick = 0;            // Reset current tick to the beginning of the exercise
+            resetNoteStates();          // Reset states to 'pending'/'rest'
+            updateExpectedNotes();      // Mark the first notes as 'expected' and update info
+            renderExercise(scoreDiv.id, currentExerciseData); // Render for the new repetition
+            updateSuccessRate();        // Reset % for the new repetition (will show 0%)
+            scrollToCurrentSystem();    // Scroll to the top of the score (tick 0)
 
-            // Riabilita i controlli (Start rimane disabilitato se MIDI non è pronto o esercizio non avviabile)
+            // Re-enable controls (Start remains disabled if MIDI not ready or exercise not startable)
             const hasPlayableNotes = currentExerciseData ? [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes]
                 .some(note => note && typeof note.startTick === 'number' && note.startTick >= 0 &&
                               !(note.keys && note.keys[0]?.toLowerCase().startsWith('r/'))) : false;
             startButton.disabled = !midiReady || !currentExerciseData || !hasPlayableNotes;
-            stopButton.disabled = false; // Stop è abilitato perché l'esercizio è ripartito
-            categorySelect.disabled = true; // Rimangono disabilitati durante l'esecuzione
+            stopButton.disabled = false; // Stop is enabled as exercise has restarted
+            categorySelect.disabled = true; // Remain disabled during execution
             exerciseSelect.disabled = true;
 
         }, delay);
 
     } else {
-        // Tutte le ripetizioni completate, esercizio finito
-        console.log("Esercizio (tutte le ripetizioni) completato con successo!");
-        isPlaying = false; // Ferma lo stato di gioco
-        stopButton.disabled = true; // Disabilita stop
-        // startButton rimarrà disabilitato finché non si seleziona/avanza a un nuovo esercizio
+        // All repetitions completed, exercise finished
+        console.log("Esercizio (tutte le ripetizioni) completato con successo!"); // LOG DI DEBUG
+        isPlaying = false; // Stop game state
+        stopButton.disabled = true; // Disable stop
+        // startButton will remain disabled until a new exercise is selected/advanced to
 
         updateInfo("Esercizio Completato!");
-        playedNoteSpan.textContent = "Bravo!"; // Messaggio di congratulazioni
+        playedNoteSpan.textContent = "Bravo!"; // Congratulations message
 
         const currentCategoryKey = categorySelect.value;
         const currentExerciseId = currentExerciseDefinition?.id;
 
-        // Verifica che lo stato sia consistente per procedere
+        // Check that state is consistent to proceed
         if (!currentCategoryKey || !allExercises[currentCategoryKey] || !currentExerciseId || !Array.isArray(allExercises[currentCategoryKey])) {
-            console.error("Stato applicazione non valido per determinare il prossimo esercizio. Categoria o ID esercizio corrente mancanti o non validi.");
-            // Riabilita i controlli per selezione manuale
+            console.error("Stato applicazione non valido per determinare il prossimo esercizio. Categoria o ID esercizio corrente mancanti o non validi."); // LOG DI DEBUG
+            // Re-enable controls for manual selection
             categorySelect.disabled = false;
             exerciseSelect.disabled = false;
-            startButton.disabled = true; // Forza la riselezione o attendi nuovo esercizio
+            startButton.disabled = true; // Force re-selection or wait for new exercise
             updateInfo("Errore stato. Seleziona un nuovo esercizio.");
             return;
         }
 
         const categoryExercises = allExercises[currentCategoryKey];
-        let nextExercise = null; // Esercizio successivo da avviare
+        let nextExercise = null; // Next exercise to start
 
-        // === Logica di Avanzamento: Ordinato vs Random ===
+        // === Advancement Logic: Ordered vs Random ===
         if (ORDERED_CATEGORIES.includes(currentCategoryKey)) {
-            // --- Avanzamento Ordinato ---
-            console.log(`Categoria "${currentCategoryKey}" è configurata per avanzamento ordinato. Cerco esercizio successivo.`);
+            // --- Ordered Advancement ---
+            console.log(`Categoria "${currentCategoryKey}" è configurata per avanzamento ordinato. Cerco esercizio successivo.`); // LOG DI DEBUG
             const currentIndex = categoryExercises.findIndex(ex => ex && ex.id === currentExerciseId);
 
             if (currentIndex !== -1 && currentIndex < categoryExercises.length - 1) {
-                // Trovato esercizio corrente, prendi il prossimo nell'array
+                // Found current exercise, take the next one in the array
                  let nextIndex = currentIndex + 1;
-                 // Salta eventuali elementi non validi nell'array degli esercizi
+                 // Skip any invalid elements in the exercises array
                  while(nextIndex < categoryExercises.length && (!categoryExercises[nextIndex] || !categoryExercises[nextIndex].id)) {
-                    console.warn(`Elemento all'indice ${nextIndex} non valido nella categoria ordinata, salto al successivo.`);
+                    console.warn(`Elemento all'indice ${nextIndex} non valido nella categoria ordinata, salto al successivo.`); // LOG DI DEBUG
                     nextIndex++;
                  }
                  if (nextIndex < categoryExercises.length) {
                     nextExercise = categoryExercises[nextIndex];
-                    console.log(`Prossimo esercizio (ordinato): ${nextExercise.name || nextExercise.id} (ID: ${nextExercise.id})`);
+                    console.log(`Prossimo esercizio (ordinato): ${nextExercise.name || nextExercise.id} (ID: ${nextExercise.id})`); // LOG DI DEBUG
                  } else {
-                    console.log("Nessun esercizio valido trovato dopo l'indice corrente nella categoria ordinata.");
-                    nextExercise = null; // Nessun altro esercizio valido trovato
+                    console.log("Nessun esercizio valido trovato dopo l'indice corrente nella categoria ordinata."); // LOG DI DEBUG
+                    nextExercise = null; // No other valid exercise found
                  }
             } else if (currentIndex === -1) {
-                console.error(`Errore: Impossibile trovare l'indice dell'esercizio corrente (ID: ${currentExerciseId}) nella categoria ordinata.`);
-                nextExercise = null; // Non si può determinare il prossimo
+                console.error(`Errore: Impossibile trovare l'indice dell'esercizio corrente (ID: ${currentExerciseId}) nella categoria ordinata.`); // LOG DI DEBUG
+                nextExercise = null; // Cannot determine next
             } else {
-                // Era l'ultimo esercizio (o l'ultimo valido) della categoria
-                console.log("Ultimo esercizio della categoria ordinata completato.");
+                // Was the last exercise (or last valid one) in the category
+                console.log("Ultimo esercizio della categoria ordinata completato."); // LOG DI DEBUG
                 nextExercise = null;
             }
         } else {
-            // --- Avanzamento Random ---
-            console.log(`Categoria "${currentCategoryKey}" non è in ORDERED_CATEGORIES. Cerco esercizio random (diverso dal corrente).`);
-            // Filtra per ottenere solo esercizi validi (con ID) diversi da quello appena completato
+            // --- Random Advancement ---
+            console.log(`Categoria "${currentCategoryKey}" non è in ORDERED_CATEGORIES. Cerco esercizio random (diverso dal corrente).`); // LOG DI DEBUG
+            // Filter to get only valid exercises (with ID) different from the one just completed
             const availableExercises = categoryExercises.filter(ex => ex && ex.id && ex.id !== currentExerciseId);
 
             if (availableExercises.length > 0) {
                 const randomIndex = Math.floor(Math.random() * availableExercises.length);
                 nextExercise = availableExercises[randomIndex];
-                console.log(`Prossimo esercizio (random): ${nextExercise.name || nextExercise.id} (ID: ${nextExercise.id})`);
+                console.log(`Prossimo esercizio (random): ${nextExercise.name || nextExercise.id} (ID: ${nextExercise.id})`); // LOG DI DEBUG
             } else {
-                // Solo 1 esercizio nella categoria o tutti gli altri non sono validi
-                console.log("Nessun altro esercizio valido disponibile per la selezione random in questa categoria.");
+                // Only 1 exercise in the category or all others are invalid
+                console.log("Nessun altro esercizio valido disponibile per la selezione random in questa categoria."); // LOG DI DEBUG
                 nextExercise = null;
             }
         }
         // ============================================
 
-        // --- Avvia il prossimo esercizio o termina ---
+        // --- Start the next exercise or finish ---
         if (nextExercise && nextExercise.id) {
-            const delay = 2500; // Pausa prima di iniziare il prossimo (in ms)
+            const delay = 2500; // Pause before starting the next one (in ms)
             updateInfo(`Prossimo: ${nextExercise.name || nextExercise.id}...`);
-            console.log(`Attendo ${delay}ms prima di caricare ${nextExercise.id}`);
+            console.log(`Attendo ${delay}ms prima di caricare ${nextExercise.id}`); // LOG DI DEBUG
 
-            // Disabilita i controlli durante l'attesa
+            // Disable controls during the wait
             categorySelect.disabled = true;
             exerciseSelect.disabled = true;
             startButton.disabled = true;
-            stopButton.disabled = true; // Assicurati che stop sia disabilitato
+            stopButton.disabled = true; // Ensure stop is disabled
 
             exerciseCompletionTimeout = setTimeout(() => {
-                exerciseCompletionTimeout = null; // Pulisce il riferimento al timeout
-                 if (!nextExercise || !nextExercise.id) { // Doppio controllo
-                     console.error("Timeout scaduto ma nextExercise non è valido.");
+                exerciseCompletionTimeout = null; // Clear the timeout reference
+                 if (!nextExercise || !nextExercise.id) { // Double check
+                     console.error("Timeout scaduto ma nextExercise non è valido."); // LOG DI DEBUG
                      updateInfo("Errore caricamento prossimo esercizio.");
-                     categorySelect.disabled = false; // Riabilita per scelta manuale
+                     categorySelect.disabled = false; // Re-enable for manual choice
                      exerciseSelect.disabled = false;
-                     startButton.disabled = !midiReady; // Abilita start se MIDI pronto
+                     startButton.disabled = !midiReady; // Enable start if MIDI ready
                      return;
                  }
-                console.log(`Caricamento automatico: ${nextExercise.id}`);
-                // Imposta il valore nel select (aggiorna UI)
+                console.log(`Caricamento automatico: ${nextExercise.id}`); // LOG DI DEBUG
+                // Set the value in the select (update UI)
                 exerciseSelect.value = nextExercise.id;
-                // Seleziona l'esercizio (carica dati, renderizza, calcola ticks, abilita/disabilita start)
+                // Select the exercise (load data, render, calculate ticks, enable/disable start)
                 selectExercise(nextExercise.id, currentCategoryKey);
 
-                // Avvia automaticamente il nuovo esercizio solo se il MIDI è pronto e l'esercizio ha note suonabili
+                // Automatically start the new exercise only if MIDI is ready and the exercise has playable notes
                 const hasPlayableNotes = currentExerciseData ? [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes]
                     .some(note => note && typeof note.startTick === 'number' && note.startTick >= 0 &&
                                   !(note.keys && note.keys[0]?.toLowerCase().startsWith('r/'))) : false;
 
                 if (midiReady && currentExerciseData && hasPlayableNotes) {
-                     console.log("Avvio automatico del prossimo esercizio...");
-                     // Breve pausa aggiuntiva per permettere il rendering prima dello start effettivo
+                     console.log("Avvio automatico del prossimo esercizio..."); // LOG DI DEBUG
+                     // Short additional pause to allow rendering before actual start
                      setTimeout(startExercise, 200);
                 } else {
-                     console.warn("MIDI non pronto o esercizio non avviabile. L'utente dovrà premere Start.");
-                     // Assicurati che i controlli siano nello stato corretto
-                     categorySelect.disabled = true; // Mantiene bloccato sulla categoria corrente
-                     exerciseSelect.disabled = true; // Mantiene bloccato sull'esercizio caricato
-                     // Start button è già gestito da selectExercise
-                     stopButton.disabled = true; // Stop rimane disabilitato
+                     console.warn("MIDI non pronto o esercizio non avviabile. L'utente dovrà premere Start."); // LOG DI DEBUG
+                     // Ensure controls are in the correct state
+                     categorySelect.disabled = true; // Keep locked on current category
+                     exerciseSelect.disabled = true; // Keep locked on loaded exercise
+                     // Start button is already handled by selectExercise
+                     stopButton.disabled = true; // Stop remains disabled
                      if (!midiReady) updateInfo(`Prossimo: ${nextExercise.name || nextExercise.id}. Collega MIDI.`);
                      else if (!hasPlayableNotes) updateInfo(`Prossimo: ${nextExercise.name || nextExercise.id}. Nessuna nota suonabile.`);
                      else updateInfo(`Prossimo: ${nextExercise.name || nextExercise.id}. Premi Start.`);
@@ -855,50 +925,50 @@ function handleExerciseCompletion() {
             }, delay);
 
         } else {
-            // Nessun altro esercizio disponibile o categoria completata
-            console.log("Nessun prossimo esercizio da avviare automaticamente.");
+            // No other exercise available or category completed
+            console.log("Nessun prossimo esercizio da avviare automaticamente."); // LOG DI DEBUG
             updateInfo("Categoria Completata! Scegli una nuova categoria o esercizio.");
             playedNoteSpan.textContent = "Ottimo Lavoro!";
-            // Riabilita i controlli per permettere all'utente di scegliere cosa fare dopo
+            // Re-enable controls to allow the user to choose what to do next
             categorySelect.disabled = false;
             exerciseSelect.disabled = false;
-            // Start button rimane disabilitato finché non viene selezionato un nuovo esercizio valido
+            // Start button remains disabled until a new valid exercise is selected
             startButton.disabled = true;
-            stopButton.disabled = true; // Stop rimane disabilitato
-            // Assicurati che lo stato dell'ultimo esercizio non sia più attivo
+            stopButton.disabled = true; // Stop remains disabled
+            // Ensure the state of the last exercise is no longer active
             currentExerciseData = null;
             currentExerciseDefinition = null;
             totalTicks = 0;
             systemYPositions = [];
-             // Potresti voler pulire lo spartito o lasciare l'ultimo visualizzato
+             // You might want to clear the score or leave the last one displayed
              // scoreDiv.innerHTML = '<p>Categoria completata!</p>';
         }
     }
 }
 
 
-// --- Funzione updateMidiStatus ---
+// --- updateMidiStatus Function ---
 /**
- * Aggiorna lo stato della connessione MIDI nell'UI e abilita/disabilita i controlli.
- * @param {string} message - Messaggio di stato MIDI.
- * @param {boolean} isConnected - True se un dispositivo MIDI è connesso.
+ * Updates the MIDI connection status in the UI and enables/disables controls.
+ * @param {string} message - MIDI status message.
+ * @param {boolean} isConnected - True if a MIDI device is connected.
  */
 function updateMidiStatus(message, isConnected) {
     midiStatusSpan.textContent = message;
     midiReady = isConnected;
 
-    // Aggiorna lo stato del pulsante Start in base alla connessione MIDI
-    // e allo stato corrente dell'applicazione
+    // Update the state of the Start button based on MIDI connection
+    // and the current application state
     const hasPlayableNotes = currentExerciseData ? [...currentExerciseData.notesTreble, ...currentExerciseData.notesBass, ...currentExerciseData.notes]
             .some(note => note && typeof note.startTick === 'number' && note.startTick >= 0 &&
                           !(note.keys && note.keys[0]?.toLowerCase().startsWith('r/'))) : false;
 
     if (isConnected) {
-        // MIDI Connesso: Abilita Start SE un esercizio valido è selezionato,
-        // ci sono note da suonare e non si sta già suonando.
+        // MIDI Connected: Enable Start IF a valid exercise is selected,
+        // there are playable notes, and it's not already playing.
         startButton.disabled = isPlaying || !currentExerciseData || !hasPlayableNotes;
-         // Se un esercizio era selezionato ma start era disabilitato per mancanza di MIDI,
-         // aggiorna il messaggio informativo.
+         // If an exercise was selected but start was disabled due to lack of MIDI,
+         // update the info message.
          if (!isPlaying && currentExerciseData && hasPlayableNotes) {
              updateInfo(`MIDI pronto. Premi Start per ${currentExerciseDefinition.name || currentExerciseDefinition.id}.`);
          } else if (!currentExerciseData) {
@@ -907,14 +977,14 @@ function updateMidiStatus(message, isConnected) {
              updateInfo("MIDI pronto. Questo esercizio non ha note suonabili.");
          }
     } else {
-        // MIDI Disconnesso: Disabilita sempre Start.
+        // MIDI Disconnected: Always disable Start.
         startButton.disabled = true;
         updateInfo("Collega un dispositivo MIDI per iniziare.");
-        // Se l'esercizio era in corso, fermalo bruscamente.
+        // If the exercise was in progress, stop it abruptly.
         if (isPlaying) {
-            console.warn("Dispositivo MIDI disconnesso durante l'esecuzione dell'esercizio!");
-            stopExercise(); // Ferma l'esercizio
-            // Mostra un messaggio più evidente all'utente
+            console.warn("Dispositivo MIDI disconnesso durante l'esecuzione dell'esercizio!"); // LOG DI DEBUG
+            stopExercise(); // Stop the exercise
+            // Show a more prominent message to the user
             alert("ATTENZIONE: Dispositivo MIDI disconnesso! Esercizio interrotto.");
             updateInfo("MIDI Disconnesso! Esercizio interrotto.");
         }
@@ -923,13 +993,13 @@ function updateMidiStatus(message, isConnected) {
 
 // --- Event Listeners ---
 categorySelect.addEventListener('change', (e) => {
-    // Quando la categoria cambia, popola il select degli esercizi
-    // e resetta lo stato (questo viene fatto dentro populateExerciseSelect)
+    // When category changes, populate exercise select
+    // and reset state (this is done inside populateExerciseSelect)
     populateExerciseSelect(e.target.value);
 });
 
 exerciseSelect.addEventListener('change', (e) => {
-    // Quando un esercizio viene selezionato, carica i suoi dati
+    // When an exercise is selected, load its data
     const selectedExerciseId = e.target.value;
     const selectedCategoryKey = categorySelect.value;
     selectExercise(selectedExerciseId, selectedCategoryKey);
@@ -938,22 +1008,22 @@ exerciseSelect.addEventListener('change', (e) => {
 startButton.addEventListener('click', startExercise);
 stopButton.addEventListener('click', stopExercise);
 
-// --- Inizializzazione Applicazione ---
+// --- Application Initialization ---
 document.addEventListener('DOMContentLoaded', () => {
     console.log("DOM completamente caricato e analizzato.");
-    console.log("Inizializzazione Piano Future vFinale (Avanzamento a Ticks)...");
+    console.log("Inizializzazione Piano Future vFinale (Avanzamento a Ticks, Scrolling migliorato, DEBUG SCROLLING ON)..."); // LOG DI DEBUG
 
-    // 1. Carica i dati degli esercizi da window.exerciseData (generato da build_exercises.js)
-    loadExerciseData(); // Include la validazione base e popola le categorie
+    // 1. Load exercise data from window.exerciseData (generated by build_exercises.js)
+    loadExerciseData(); // Includes basic validation and populates categories
 
-    // 2. Inizializza il sistema MIDI (Web MIDI API)
-    // Passa le callback per gestire gli eventi MIDI (note on) e gli aggiornamenti di stato
+    // 2. Initialize MIDI system (Web MIDI API)
+    // Pass callbacks to handle MIDI events (note on) and status updates
     initializeMIDI(handleNoteOn, updateMidiStatus);
 
-    // 3. Imposta lo stato iniziale dell'UI
-    resetUIState(); // Assicura che l'UI sia nello stato iniziale corretto
-    stopButton.disabled = true; // Stop sempre disabilitato all'inizio
-    startButton.disabled = true; // Start disabilitato finché MIDI non è pronto E un esercizio valido è selezionato
-    scoreDiv.innerHTML = '<p>Benvenuto! Seleziona una categoria e un esercizio.</p>'; // Messaggio iniziale
+    // 3. Set initial UI state
+    resetUIState(); // Ensure UI is in correct initial state
+    stopButton.disabled = true; // Stop is always disabled initially
+    startButton.disabled = true; // Start is disabled until MIDI is ready AND a valid exercise is selected
+    scoreDiv.innerHTML = '<p>Benvenuto! Seleziona una categoria e un esercizio.</p>'; // Initial message
     updateInfo("Collega un dispositivo MIDI e seleziona un esercizio.");
 });

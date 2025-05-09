@@ -244,13 +244,20 @@ h1 {
     margin-top: 20px;
     padding: 20px;
     border: 1px solid #1B263B;
-    min-height: 320px;
+    min-height: 320px; /* Puoi aggiustare questa altezza se necessario */
     background-color: #E0E1DD;
     text-align: center;
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
     overflow-x: auto;
-    overflow-y: hidden;
+    overflow-y: auto; /* <-- CAMBIA QUI da hidden a auto */
+}
+
+#score svg {
+    display: inline-block;
+    /* Aggiungi eventualmente max-width: 100%; height: auto; se l'SVG è troppo largo */
+    /* max-width: 100%; */
+    /* height: auto; */
 }
 
 #score svg {
